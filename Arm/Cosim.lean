@@ -12,7 +12,7 @@ open BitVec
 /-- A default concrete state to begin co-simulations. -/
 def init_cosim_state : ArmState :=
   { gpr := (fun (_ : VReg 5) => 0#64),
-    sfp := (fun (_ : BitVec 5) => 0#128),
+    sfp := (fun (_ : VReg 5) => 0#128),
     pc  := 0#64,
     pstate := zero_pstate,
     mem := (fun (_ : BitVec 64) => 0#8),

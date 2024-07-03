@@ -132,7 +132,7 @@ structure ArmState where
   -- General-purpose registers: register 31 is the stack pointer.
   gpr        : Store (VReg 5) (BitVec 64)
   -- SIMD/floating-point registers
-  sfp        : Store (BitVec 5) (BitVec 128)
+  sfp        : Store (VReg 5) (BitVec 128)
   -- Program Counter
   pc         : BitVec 64
   -- PState
@@ -182,10 +182,17 @@ def write_base_gprv (idx : Nat) (val : BitVec 64) (s : ArmState)
 -- SIMD/FP Registers --
 
 def read_base_sfp (idx : BitVec 5) (s : ArmState) : BitVec 128 :=
-    read_store idx s.sfp
+    read_store ↑idx s.sfp
+
+def read_base_sfpv (idx : Nat) (s : ArmState) : BitVec 128 :=
+    read_store (.virtual idx) s.sfp
 
 def write_base_sfp (idx : BitVec 5) (val : BitVec 128) (s : ArmState) : ArmState :=
-   let new_sfp := write_store idx val s.sfp
+   let new_sfp := write_store ↑idx val s.sfp
+   { s with sfp := new_sfp }
+
+def write_base_sfpv (idx : Nat) (val : BitVec 128) (s : ArmState) : ArmState :=
+   let new_sfp := write_store (.virtual idx) val s.sfp
    { s with sfp := new_sfp }
 
 -- Program Counter --
