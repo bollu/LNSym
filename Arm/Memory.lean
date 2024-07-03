@@ -49,7 +49,7 @@ def write_mem_bytes (n : Nat) (addr : BitVec 64) (val : BitVec (n * 8)) (s : Arm
 
 theorem r_of_write_mem : r fld (write_mem addr val s) = r fld s := by
   unfold r
-  unfold read_base_gpr read_base_gprv read_base_sfp read_base_pc
+  unfold read_base_gpr read_base_gprv read_base_sfp read_base_sfpv read_base_pc
   unfold read_base_flag read_base_error
   unfold write_mem
   split <;> simp
@@ -84,7 +84,7 @@ theorem fetch_inst_of_write_mem_bytes :
 theorem read_mem_of_w :
   read_mem addr (w fld v s) = read_mem addr s := by
   unfold read_mem
-  unfold w write_base_gpr write_base_gprv write_base_sfp
+  unfold w write_base_gpr write_base_gprv write_base_sfp write_base_sfpv
   unfold write_base_pc write_base_flag write_base_error
   split <;> simp
 
