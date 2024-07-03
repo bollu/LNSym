@@ -107,9 +107,30 @@ structure PState where
   v : BitVec 1
 deriving DecidableEq, Repr
 
+/-- A (potentially) virtual register of width 'w'. -/
+inductive VReg (w : Nat) where
+| concrete : BitVec w → VReg w
+| virtual : Nat → VReg w
+deriving DecidableEq, Repr
+
+instance : Coe (BitVec w) (VReg w) where
+  coe x := VReg.concrete x
+
+instance [Repr β]: Repr (Store (VReg n) β) where
+  reprPrec store _ :=
+    let rec helper (a : Nat) (acc : Lean.Format) :=
+      let a_bv := BitVec.ofNat n a
+      let a_repr := "(" ++ repr a_bv ++ " : " ++ (repr (read_store ↑a_bv store)) ++ ") \n"
+      match a with
+      | 0 => a_repr ++ acc
+      | a' + 1 => helper a' (a_repr ++ acc)
+    let (elide_p, upper_limit) := if n < 5 then (false, (2^n - 1)) else (true, 5)
+    let ans := helper upper_limit ""
+    if elide_p then (ans ++ "...") else ans
+
 structure ArmState where
   -- General-purpose registers: register 31 is the stack pointer.
-  gpr        : Store (BitVec 5) (BitVec 64)
+  gpr        : Store (VReg 5) (BitVec 64)
   -- SIMD/floating-point registers
   sfp        : Store (BitVec 5) (BitVec 128)
   -- Program Counter
@@ -139,13 +160,14 @@ deriving Repr
 -- General-purpose registers --
 
 -- Read the `idx`-th GPR (with idx = 31 indexing the SP).
+-- TODO: Generalize this to read from virtual registers.
 def read_base_gpr (idx : BitVec 5) (s : ArmState) : BitVec 64 :=
-  read_store idx s.gpr
+  read_store ↑idx s.gpr
 
 -- Write `val` to the `idx`-th GPR (with idx = 31 indexing the SP).
 def write_base_gpr (idx : BitVec 5) (val : BitVec 64) (s : ArmState)
   : ArmState :=
-    let new_gpr := write_store idx val s.gpr
+    let new_gpr := write_store ↑idx val s.gpr
     { s with gpr := new_gpr }
 
 -- SIMD/FP Registers --
