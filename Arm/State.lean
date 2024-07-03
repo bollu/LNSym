@@ -107,11 +107,32 @@ structure PState where
   v : BitVec 1
 deriving DecidableEq, Repr
 
+/-- A (potentially) virtual register of width 'w'. -/
+inductive VReg (w : Nat) where
+| concrete : BitVec w → VReg w
+| virtual : Nat → VReg w
+deriving DecidableEq, Repr
+
+instance : Coe (BitVec w) (VReg w) where
+  coe x := VReg.concrete x
+
+instance [Repr β]: Repr (Store (VReg n) β) where
+  reprPrec store _ :=
+    let rec helper (a : Nat) (acc : Lean.Format) :=
+      let a_bv := BitVec.ofNat n a
+      let a_repr := "(" ++ repr a_bv ++ " : " ++ (repr (read_store ↑a_bv store)) ++ ") \n"
+      match a with
+      | 0 => a_repr ++ acc
+      | a' + 1 => helper a' (a_repr ++ acc)
+    let (elide_p, upper_limit) := if n < 5 then (false, (2^n - 1)) else (true, 5)
+    let ans := helper upper_limit ""
+    if elide_p then (ans ++ "...") else ans
+
 structure ArmState where
   -- General-purpose registers: register 31 is the stack pointer.
-  gpr        : Store (BitVec 5) (BitVec 64)
+  gpr        : Store (VReg 5) (BitVec 64)
   -- SIMD/floating-point registers
-  sfp        : Store (BitVec 5) (BitVec 128)
+  sfp        : Store (VReg 5) (BitVec 128)
   -- Program Counter
   pc         : BitVec 64
   -- PState
@@ -140,21 +161,38 @@ deriving Repr
 
 -- Read the `idx`-th GPR (with idx = 31 indexing the SP).
 def read_base_gpr (idx : BitVec 5) (s : ArmState) : BitVec 64 :=
-  read_store idx s.gpr
+  read_store ↑idx s.gpr
+
+-- Read the `idx`-th virtual GPR.
+def read_base_gprv (idx : Nat) (s : ArmState) : BitVec 64 :=
+  read_store (VReg.virtual idx) s.gpr
 
 -- Write `val` to the `idx`-th GPR (with idx = 31 indexing the SP).
 def write_base_gpr (idx : BitVec 5) (val : BitVec 64) (s : ArmState)
   : ArmState :=
-    let new_gpr := write_store idx val s.gpr
+    let new_gpr := write_store ↑idx val s.gpr
+    { s with gpr := new_gpr }
+
+-- Write `val` to the `idx`-th virtual GPR
+def write_base_gprv (idx : Nat) (val : BitVec 64) (s : ArmState)
+  : ArmState :=
+    let new_gpr := write_store (VReg.virtual idx) val s.gpr
     { s with gpr := new_gpr }
 
 -- SIMD/FP Registers --
 
 def read_base_sfp (idx : BitVec 5) (s : ArmState) : BitVec 128 :=
-    read_store idx s.sfp
+    read_store ↑idx s.sfp
+
+def read_base_sfpv (idx : Nat) (s : ArmState) : BitVec 128 :=
+    read_store (.virtual idx) s.sfp
 
 def write_base_sfp (idx : BitVec 5) (val : BitVec 128) (s : ArmState) : ArmState :=
-   let new_sfp := write_store idx val s.sfp
+   let new_sfp := write_store ↑idx val s.sfp
+   { s with sfp := new_sfp }
+
+def write_base_sfpv (idx : Nat) (val : BitVec 128) (s : ArmState) : ArmState :=
+   let new_sfp := write_store (.virtual idx) val s.sfp
    { s with sfp := new_sfp }
 
 -- Program Counter --
@@ -217,7 +255,9 @@ open BitVec
 
 inductive StateField where
   | GPR    : BitVec 5 → StateField
+  | GPRV   : Nat → StateField -- virtual register for GPR
   | SFP    : BitVec 5 → StateField
+  | SFPV   : Nat → StateField
   | PC     : StateField
   | FLAG   : PFlag → StateField
   | ERR    : StateField
@@ -225,24 +265,27 @@ deriving DecidableEq, Repr
 
 -- Injective Lemmas for StateField
 attribute [state_simp_rules] StateField.GPR.injEq
+attribute [state_simp_rules] StateField.GPRV.injEq
 attribute [state_simp_rules] StateField.SFP.injEq
 attribute [state_simp_rules] StateField.FLAG.injEq
 
 def state_value (fld : StateField) : Type :=
   open StateField in
   match fld with
-  | GPR _   => BitVec 64
-  | SFP _   => BitVec 128
-  | PC      => BitVec 64
-  | FLAG _  => BitVec 1
-  | ERR     => StateError
+  | GPR _ | GPRV _  => BitVec 64
+  | SFP _ | SFPV _  => BitVec 128
+  | PC              => BitVec 64
+  | FLAG _          => BitVec 1
+  | ERR             => StateError
 
 @[irreducible]
 def r (fld : StateField) (s : ArmState) : (state_value fld) :=
   open StateField in
   match fld with
   | GPR i   => read_base_gpr i s
+  | GPRV i  => read_base_gprv i s
   | SFP i   => read_base_sfp i s
+  | SFPV i  => read_base_sfpv i s
   | PC      => read_base_pc s
   | FLAG i  => read_base_flag i s
   | ERR     => read_base_error s
@@ -252,7 +295,9 @@ def w (fld : StateField) (v : (state_value fld)) (s : ArmState) : ArmState :=
   open StateField in
   match fld with
   | GPR i  => write_base_gpr i v s
+  | GPRV i => write_base_gprv i v s
   | SFP i  => write_base_sfp i v s
+  | SFPV i => write_base_sfpv i v s
   | PC     => write_base_pc v s
   | FLAG i => write_base_flag i v s
   | ERR    => write_base_error v s
@@ -261,7 +306,9 @@ def w (fld : StateField) (v : (state_value fld)) (s : ArmState) : ArmState :=
 theorem r_of_w_same : r fld (w fld v s) = v := by
   unfold r w
   unfold read_base_gpr write_base_gpr
+  unfold read_base_gprv write_base_gprv
   unfold read_base_sfp write_base_sfp
+  unfold read_base_sfpv write_base_sfpv
   unfold read_base_pc write_base_pc
   unfold read_base_flag write_base_flag
   unfold read_base_error write_base_error
@@ -272,7 +319,9 @@ theorem r_of_w_different (h : fld1 ≠ fld2) :
   r fld1 (w fld2 v s) = r fld1 s := by
   unfold r w
   unfold read_base_gpr write_base_gpr
+  unfold read_base_gprv write_base_gprv
   unfold read_base_sfp write_base_sfp
+  unfold read_base_sfpv write_base_sfpv
   unfold read_base_pc write_base_pc
   unfold read_base_flag write_base_flag
   unfold read_base_error write_base_error
@@ -283,7 +332,9 @@ theorem r_of_w_different (h : fld1 ≠ fld2) :
 theorem w_of_w_shadow : w fld v2 (w fld v1 s) = w fld v2 s := by
   unfold w
   unfold write_base_gpr
+  unfold write_base_gprv
   unfold write_base_sfp
+  unfold write_base_sfpv
   unfold write_base_pc
   unfold write_base_flag
   unfold write_base_error
@@ -293,7 +344,9 @@ theorem w_of_w_shadow : w fld v2 (w fld v1 s) = w fld v2 s := by
 theorem w_irrelevant : w fld (r fld s) s = s := by
   unfold r w
   unfold read_base_gpr write_base_gpr
+  unfold read_base_gprv write_base_gprv
   unfold read_base_sfp write_base_sfp
+  unfold read_base_sfpv write_base_sfpv
   unfold read_base_pc write_base_pc
   unfold read_base_flag write_base_flag
   unfold read_base_error write_base_error
@@ -303,7 +356,9 @@ theorem w_irrelevant : w fld (r fld s) s = s := by
 theorem fetch_inst_of_w : fetch_inst addr (w fld val s) = fetch_inst addr s := by
   unfold fetch_inst w
   unfold write_base_gpr
+  unfold write_base_gprv
   unfold write_base_sfp
+  unfold write_base_sfpv
   unfold write_base_pc
   unfold write_base_flag
   unfold write_base_error
@@ -315,7 +370,9 @@ theorem w_program : (w fld v s).program = s.program := by
   intros
   cases fld <;> unfold w <;> simp
   · unfold write_base_gpr; simp
+  · unfold write_base_gprv; simp
   · unfold write_base_sfp; simp
+  · unfold write_base_sfpv; simp
   · unfold write_base_pc; simp
   · unfold write_base_flag; simp
   · unfold write_base_error; simp

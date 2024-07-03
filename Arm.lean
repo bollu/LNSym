@@ -8,3 +8,4 @@ Author(s): Shilpi Goel
 import «Arm».Exec
 import «Arm».Cosim
 import «Arm».Cfg.Cfg
+import «Arm».VReg
